@@ -155,6 +155,7 @@ training:
   learning_rate: 3e-5                      # 学習率
   num_epochs: 4                            # エポック数
   weight_decay: 0.01                       # 重み減衰
+  early_stopping_patience: 2               # Early Stoppingの許容エポック
 
 # 評価設定
 evaluation:
@@ -165,7 +166,7 @@ evaluation:
 ## 📊 期待される結果
 
 ### 性能目標
-- **主目標**: F1スコア 0.85以上
+- **主目標**: ROC-AUC 0.85以上
 - **副目標**: ベースラインからの+5%以上の改善
 
 ### 出力ファイル
@@ -213,7 +214,7 @@ python src/main.py --log-level DEBUG
 ### 使用技術
 - **フレームワーク**: PyTorch + Transformers
 - **モデル**: ModernBERT (sbintuitions/modernbert-ja-130m)
-- **ベースライン**: TF-IDF + ロジスティック回帰/ランダムフォレスト
+- **ベースライン**: TF-IDF + ロジスティック回帰/LightGBM
 - **評価**: 5-fold Cross Validation
 
 ### 必要環境

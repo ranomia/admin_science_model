@@ -17,8 +17,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from sklearn.metrics import (
-    accuracy_score, auc, classification_report, confusion_matrix,
-    f1_score, precision_recall_curve, precision_score, recall_score,
+    auc, precision_recall_curve,
     roc_auc_score, roc_curve
 )
 
@@ -37,95 +36,32 @@ class MetricsCalculator:
     def calculate_all_metrics(
         self,
         y_true: np.ndarray,
-        y_pred: np.ndarray,
+        y_pred: Optional[np.ndarray] = None,
         y_prob: Optional[np.ndarray] = None,
         average: str = 'weighted'
     ) -> Dict[str, float]:
         """
-        全ての評価指標を計算する.
-        
+        ROC-AUCのみを計算する.
+
         Args:
             y_true: 真のラベル
-            y_pred: 予測ラベル
+            y_pred: 未使用（互換性のため）
             y_prob: 予測確率
-            average: 平均化方法
-            
+            average: 未使用
+
         Returns:
-            評価指標の辞書
+            {'roc_auc': スコア} の辞書
         """
-        metrics = {
-            'accuracy': accuracy_score(y_true, y_pred),
-            'precision': precision_score(y_true, y_pred, average=average, zero_division=0),
-            'recall': recall_score(y_true, y_pred, average=average, zero_division=0),
-            'f1': f1_score(y_true, y_pred, average=average, zero_division=0)
-        }
-        
-        # ROC-AUCは2値分類の場合のみ
+        metrics: Dict[str, float] = {}
+
         if y_prob is not None and len(np.unique(y_true)) == 2:
             if y_prob.ndim > 1:
-                # 確率が2次元の場合、正例の確率を使用
                 y_prob_positive = y_prob[:, 1]
             else:
                 y_prob_positive = y_prob
             metrics['roc_auc'] = roc_auc_score(y_true, y_prob_positive)
-        
+
         return metrics
-        
-    def calculate_class_metrics(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
-        class_names: Optional[List[str]] = None
-    ) -> pd.DataFrame:
-        """
-        クラス別の評価指標を計算する.
-        
-        Args:
-            y_true: 真のラベル
-            y_pred: 予測ラベル
-            class_names: クラス名のリスト
-            
-        Returns:
-            クラス別評価指標のデータフレーム
-        """
-        if class_names is None:
-            class_names = [f'Class_{i}' for i in np.unique(y_true)]
-            
-        report = classification_report(
-            y_true, y_pred,
-            target_names=class_names,
-            output_dict=True,
-            zero_division=0
-        )
-        
-        # データフレームに変換
-        df_metrics = pd.DataFrame(report).transpose()
-        
-        return df_metrics
-        
-    def calculate_confusion_matrix(
-        self,
-        y_true: np.ndarray,
-        y_pred: np.ndarray,
-        class_names: Optional[List[str]] = None
-    ) -> Tuple[np.ndarray, List[str]]:
-        """
-        混同行列を計算する.
-        
-        Args:
-            y_true: 真のラベル
-            y_pred: 予測ラベル
-            class_names: クラス名のリスト
-            
-        Returns:
-            (混同行列, クラス名)のタプル
-        """
-        cm = confusion_matrix(y_true, y_pred)
-        
-        if class_names is None:
-            class_names = [f'Class_{i}' for i in np.unique(y_true)]
-            
-        return cm, class_names
 
 
 class MetricsVisualizer:
@@ -296,20 +232,18 @@ class MetricsVisualizer:
         Returns:
             matplotlib図オブジェクト
         """
-        fig, axes = plt.subplots(2, 2, figsize=(15, 10))
-        axes = axes.ravel()
-        
-        metrics = ['train_loss', 'val_loss', 'val_accuracy', 'val_f1']
-        titles = ['Training Loss', 'Validation Loss', 'Validation Accuracy', 'Validation F1']
-        
-        for i, (metric, metric_title) in enumerate(zip(metrics, titles)):
+        fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+        metrics = ['train_loss', 'val_loss', 'val_roc_auc']
+        titles = ['Training Loss', 'Validation Loss', 'Validation ROC-AUC']
+
+        for ax, metric, metric_title in zip(axes, metrics, titles):
             if metric in history and history[metric]:
-                axes[i].plot(history[metric], label=metric_title)
-                axes[i].set_title(metric_title)
-                axes[i].set_xlabel('Epoch')
-                axes[i].set_ylabel('Value')
-                axes[i].legend()
-                axes[i].grid(True)
+                ax.plot(history[metric], label=metric_title)
+                ax.set_title(metric_title)
+                ax.set_xlabel('Epoch')
+                ax.set_ylabel('Value')
+                ax.legend()
+                ax.grid(True)
         
         plt.suptitle(title)
         plt.tight_layout()
@@ -386,92 +320,67 @@ class ModelEvaluator:
     def evaluate_model(
         self,
         y_true: np.ndarray,
-        y_pred: np.ndarray,
-        y_prob: Optional[np.ndarray] = None,
+        y_prob: np.ndarray,
         model_name: str = "Model",
-        class_names: Optional[List[str]] = None
     ) -> Dict:
         """
-        モデルの包括的評価を実行する.
-        
+        モデルの評価を実行する（ROC-AUCのみ）.
+
         Args:
             y_true: 真のラベル
-            y_pred: 予測ラベル
             y_prob: 予測確率
             model_name: モデル名
-            class_names: クラス名のリスト
-            
+
         Returns:
             評価結果の辞書
         """
         self.logger.info(f"{model_name}の評価を開始します")
-        
-        # 基本指標を計算
-        metrics = self.metrics_calc.calculate_all_metrics(y_true, y_pred, y_prob)
-        
-        # クラス別指標を計算
-        class_metrics = self.metrics_calc.calculate_class_metrics(y_true, y_pred, class_names)
-        
-        # 混同行列を計算
-        cm, class_names = self.metrics_calc.calculate_confusion_matrix(y_true, y_pred, class_names)
-        
+
+        # 指標を計算
+        metrics = self.metrics_calc.calculate_all_metrics(y_true, y_prob=y_prob)
+
         # 結果をまとめる
         results = {
             'model_name': model_name,
             'metrics': metrics,
-            'class_metrics': class_metrics,
-            'confusion_matrix': cm,
-            'class_names': class_names
         }
-        
+
         # 可視化
         if self.output_dir:
-            self._create_visualizations(y_true, y_pred, y_prob, results)
-            
+            self._create_visualizations(y_true, y_prob, results)
+
         self.logger.info(f"{model_name}の評価が完了しました")
         return results
         
     def _create_visualizations(
         self,
         y_true: np.ndarray,
-        y_pred: np.ndarray,
         y_prob: Optional[np.ndarray],
         results: Dict
     ) -> None:
         """
-        可視化を作成する.
-        
+        ROC曲線などの可視化を作成する.
+
         Args:
             y_true: 真のラベル
-            y_pred: 予測ラベル
             y_prob: 予測確率
             results: 評価結果
         """
         model_name = results['model_name']
-        
-        # 混同行列
-        cm_path = self.output_dir / f"{model_name}_confusion_matrix.png"
-        self.visualizer.plot_confusion_matrix(
-            results['confusion_matrix'],
-            results['class_names'],
-            title=f"{model_name} - Confusion Matrix",
-            save_path=cm_path
-        )
-        
-        # ROC曲線（2値分類の場合）
+
         if y_prob is not None and len(np.unique(y_true)) == 2:
             if y_prob.ndim > 1:
                 y_prob_positive = y_prob[:, 1]
             else:
                 y_prob_positive = y_prob
-                
+
             roc_path = self.output_dir / f"{model_name}_roc_curve.png"
             self.visualizer.plot_roc_curve(
                 y_true, y_prob_positive,
                 title=f"{model_name} - ROC Curve",
                 save_path=roc_path
             )
-            
+
             pr_path = self.output_dir / f"{model_name}_pr_curve.png"
             self.visualizer.plot_precision_recall_curve(
                 y_true, y_prob_positive,

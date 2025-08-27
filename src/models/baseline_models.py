@@ -17,13 +17,14 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import (
-    accuracy_score, classification_report, confusion_matrix, f1_score,
-    precision_score, recall_score, roc_auc_score
-)
+from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import cross_val_score
 from sklearn.pipeline import Pipeline
 from sklearn.svm import SVC
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import FunctionTransformer
+
+from lightgbm import LGBMClassifier
 
 
 class BaselineModel:
@@ -105,37 +106,30 @@ class BaselineModel:
         """
         raise NotImplementedError
         
-    def evaluate(self, X: pd.Series, y: pd.Series) -> Dict[str, float]:
+    def evaluate(self, X: Union[pd.Series, pd.DataFrame], y: pd.Series) -> Dict[str, float]:
         """
         モデルを評価する.
-        
+
         Args:
-            X: 特徴量（テキスト）
+            X: 特徴量（テキストまたは特徴量データフレーム）
             y: 目的変数
-            
+
         Returns:
             評価指標の辞書
         """
         if not self.is_fitted:
             raise ValueError("モデルが訓練されていません")
             
-        # 予測
-        y_pred = self.predict(X)
+        # 予測確率
         y_prob = self.predict_proba(X)
-        
+
         # ラベルをエンコード
         y_true = self._encode_labels(y)
-        
-        # 評価指標を計算
-        metrics = {
-            'accuracy': accuracy_score(y_true, y_pred),
-            'precision': precision_score(y_true, y_pred, average='weighted'),
-            'recall': recall_score(y_true, y_pred, average='weighted'),
-            'f1': f1_score(y_true, y_pred, average='weighted'),
+
+        # ROC-AUCのみ計算
+        return {
             'roc_auc': roc_auc_score(y_true, y_prob[:, 1])
         }
-        
-        return metrics
         
     def save_model(self, filepath: Union[str, Path]) -> None:
         """
@@ -207,32 +201,39 @@ class TFIDFLogisticRegression(BaselineModel):
             ('classifier', self.model)
         ])
         
-    def fit(self, X: pd.Series, y: pd.Series) -> None:
+    def fit(self, X: Union[pd.Series, pd.DataFrame], y: pd.Series) -> None:
         """モデルを訓練する."""
         self.logger.info("TF-IDF + ロジスティック回帰の訓練を開始します")
-        
+
+        if isinstance(X, pd.DataFrame):
+            X_input = X['combined_text']
+        else:
+            X_input = X
+
         # ラベルをエンコード
         y_encoded = self._encode_labels(y)
-        
+
         # 訓練
-        self.pipeline.fit(X, y_encoded)
+        self.pipeline.fit(X_input, y_encoded)
         self.is_fitted = True
-        
+
         self.logger.info("訓練が完了しました")
-        
-    def predict(self, X: pd.Series) -> np.ndarray:
+
+    def predict(self, X: Union[pd.Series, pd.DataFrame]) -> np.ndarray:
         """予測を行う."""
         if not self.is_fitted:
             raise ValueError("モデルが訓練されていません")
-            
-        return self.pipeline.predict(X)
-        
-    def predict_proba(self, X: pd.Series) -> np.ndarray:
+
+        X_input = X['combined_text'] if isinstance(X, pd.DataFrame) else X
+        return self.pipeline.predict(X_input)
+
+    def predict_proba(self, X: Union[pd.Series, pd.DataFrame]) -> np.ndarray:
         """予測確率を計算する."""
         if not self.is_fitted:
             raise ValueError("モデルが訓練されていません")
-            
-        return self.pipeline.predict_proba(X)
+
+        X_input = X['combined_text'] if isinstance(X, pd.DataFrame) else X
+        return self.pipeline.predict_proba(X_input)
 
 
 class TFIDFRandomForest(BaselineModel):
@@ -322,6 +323,77 @@ class TFIDFRandomForest(BaselineModel):
         return importance_df
 
 
+class TFIDFLightGBM(BaselineModel):
+    """TF-IDF + LightGBMモデル."""
+
+    def __init__(self, config: Dict):
+        """初期化."""
+        super().__init__(config)
+
+        self.vectorizer = TfidfVectorizer(
+            max_features=10000,
+            ngram_range=(1, 2),
+            min_df=2,
+            max_df=0.95,
+            sublinear_tf=True
+        )
+
+        self.model = LGBMClassifier(
+            n_estimators=300,
+            learning_rate=0.05,
+            num_leaves=31,
+            random_state=config['evaluation']['random_state'],
+            class_weight='balanced'
+        )
+
+        self.pipeline = None
+
+    def _build_pipeline(self, X: pd.DataFrame) -> None:
+        numeric_features = [col for col in X.columns if col != 'combined_text']
+
+        preprocessor = ColumnTransformer(
+            transformers=[
+                ('tfidf', self.vectorizer, 'combined_text'),
+                ('num', 'passthrough', numeric_features)
+            ]
+        )
+
+        self.pipeline = Pipeline([
+            ('preprocessor', preprocessor),
+            ('classifier', self.model)
+        ])
+
+    def fit(self, X: Union[pd.Series, pd.DataFrame], y: pd.Series) -> None:
+        self.logger.info("TF-IDF + LightGBMの訓練を開始します")
+
+        if isinstance(X, pd.Series):
+            X_df = X.to_frame('combined_text')
+        else:
+            X_df = X
+
+        y_encoded = self._encode_labels(y)
+
+        self._build_pipeline(X_df)
+        self.pipeline.fit(X_df, y_encoded)
+        self.is_fitted = True
+
+        self.logger.info("訓練が完了しました")
+
+    def predict(self, X: Union[pd.Series, pd.DataFrame]) -> np.ndarray:
+        if not self.is_fitted:
+            raise ValueError("モデルが訓練されていません")
+
+        X_df = X.to_frame('combined_text') if isinstance(X, pd.Series) else X
+        return self.pipeline.predict(X_df)
+
+    def predict_proba(self, X: Union[pd.Series, pd.DataFrame]) -> np.ndarray:
+        if not self.is_fitted:
+            raise ValueError("モデルが訓練されていません")
+
+        X_df = X.to_frame('combined_text') if isinstance(X, pd.Series) else X
+        return self.pipeline.predict_proba(X_df)
+
+
 class BaselineEvaluator:
     """ベースラインモデルの評価クラス."""
     
@@ -338,19 +410,19 @@ class BaselineEvaluator:
     def compare_models(
         self,
         models: Dict[str, BaselineModel],
-        X_train: pd.Series,
+        X_train: Union[pd.Series, pd.DataFrame],
         y_train: pd.Series,
-        X_val: pd.Series,
+        X_val: Union[pd.Series, pd.DataFrame],
         y_val: pd.Series
     ) -> pd.DataFrame:
         """
         複数のモデルを比較する.
-        
+
         Args:
             models: モデルの辞書
-            X_train: 訓練用特徴量
+            X_train: 訓練用特徴量（SeriesまたはDataFrame）
             y_train: 訓練用目的変数
-            X_val: 検証用特徴量
+            X_val: 検証用特徴量（SeriesまたはDataFrame）
             y_val: 検証用目的変数
             
         Returns:
@@ -384,16 +456,16 @@ class BaselineEvaluator:
     def cross_validate_model(
         self,
         model: BaselineModel,
-        X: pd.Series,
+        X: Union[pd.Series, pd.DataFrame],
         y: pd.Series,
         cv: int = 5
     ) -> Dict[str, np.ndarray]:
         """
         クロスバリデーションを実行する.
-        
+
         Args:
             model: 評価するモデル
-            X: 特徴量
+            X: 特徴量（SeriesまたはDataFrame）
             y: 目的変数
             cv: 分割数
             
@@ -405,24 +477,18 @@ class BaselineEvaluator:
         # ラベルをエンコード
         y_encoded = model._encode_labels(y)
         
-        # クロスバリデーション実行
-        scoring = ['accuracy', 'precision_weighted', 'recall_weighted', 'f1_weighted']
-        cv_results = {}
-        
-        for score in scoring:
-            scores = cross_val_score(
-                model.pipeline, X, y_encoded,
-                cv=cv, scoring=score,
-                n_jobs=-1
-            )
-            cv_results[score] = scores
-            
-        return cv_results
+        # クロスバリデーション実行（ROC-AUCのみ）
+        scores = cross_val_score(
+            model.pipeline, X, y_encoded,
+            cv=cv, scoring='roc_auc',
+            n_jobs=-1
+        )
+        return {'roc_auc': scores}
         
     def generate_detailed_report(
         self,
         model: BaselineModel,
-        X_test: pd.Series,
+        X_test: Union[pd.Series, pd.DataFrame],
         y_test: pd.Series,
         model_name: str
     ) -> Dict:
@@ -431,7 +497,7 @@ class BaselineEvaluator:
         
         Args:
             model: 評価するモデル
-            X_test: テスト用特徴量
+            X_test: テスト用特徴量（SeriesまたはDataFrame）
             y_test: テスト用目的変数
             model_name: モデル名
             
@@ -441,46 +507,29 @@ class BaselineEvaluator:
         if not model.is_fitted:
             raise ValueError("モデルが訓練されていません")
             
-        # 予測
-        y_pred = model.predict(X_test)
+        # 予測確率のみ取得
         y_prob = model.predict_proba(X_test)
         y_true = model._encode_labels(y_test)
-        
-        # 基本的な評価指標
+
+        # ROC-AUCを計算
         metrics = model.evaluate(X_test, y_test)
-        
-        # 混同行列
-        cm = confusion_matrix(y_true, y_pred)
-        
-        # 分類レポート
-        class_report = classification_report(
-            y_true, y_pred,
-            target_names=['非該当', '該当'],
-            output_dict=True
-        )
-        
-        # 詳細レポート
+
+        # 詳細レポート（ROC-AUCと確率のみ）
         report = {
             'model_name': model_name,
             'metrics': metrics,
-            'confusion_matrix': cm,
-            'classification_report': class_report,
             'predictions': {
                 'y_true': y_true,
-                'y_pred': y_pred,
                 'y_prob': y_prob
             }
         }
-        
+
         return report
 
 
 def create_baseline_models(config: Dict) -> Dict[str, BaselineModel]:
     """
     ベースラインモデルを作成する.
-
-    現時点では精度の低かった手法を除外し、
-    TF-IDF + ロジスティック回帰のみを提供する。
 
     Args:
         config: 設定辞書
@@ -489,7 +538,8 @@ def create_baseline_models(config: Dict) -> Dict[str, BaselineModel]:
         ベースラインモデルの辞書
     """
     models = {
-        'tfidf_logistic': TFIDFLogisticRegression(config)
+        'tfidf_logistic': TFIDFLogisticRegression(config),
+        'tfidf_lightgbm': TFIDFLightGBM(config)
     }
 
     return models
