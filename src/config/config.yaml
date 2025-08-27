@@ -1,0 +1,50 @@
+# 行政事業レビュー科学技術分類モデル設定ファイル
+
+# データ設定
+data:
+  train_path: "data/raw/train_deduplicated.csv"
+  test_path: "data/raw/test_deduplicated.csv"
+  processed_dir: "data/processed"
+  target_column: "science_tech_decision"
+  forbidden_columns: ["science_tech_category"]
+  text_columns: ["project_name", "project_objective", "project_summary", "current_issues"]
+  
+# モデル設定
+model:
+  name: "sbintuitions/modernbert-ja-130m"
+  baseline_name: "tohoku-nlp/bert-base-japanese-v3"
+  max_length: 512
+  num_labels: 2
+  dropout_rate: 0.1
+
+# 訓練設定
+training:
+  batch_size: 16
+  learning_rate: 3e-5
+  num_epochs: 4
+  warmup_ratio: 0.1
+  weight_decay: 0.01
+  save_steps: 500
+  eval_steps: 500
+  logging_steps: 100
+  
+# 評価設定
+evaluation:
+  cv_folds: 5
+  stratify: true
+  test_size: 0.2
+  random_state: 42
+  
+# ハイパーパラメータ探索
+hyperparameter_search:
+  learning_rates: [2e-5, 3e-5, 5e-5]
+  batch_sizes: [8, 16, 32]
+  epochs: [3, 4, 5]
+  max_lengths: [512, 1024, 2048]
+  
+# 出力設定
+output:
+  model_dir: "models"
+  results_dir: "results"
+  logs_dir: "logs"
+  figures_dir: "figures" 
