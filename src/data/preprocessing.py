@@ -216,13 +216,28 @@ class DataPreprocessor:
                 df_processed = df_processed.drop(columns=[col])
                 self.logger.info(f"禁止列を除去しました: {col}")
         
+        # テキスト長特徴量を作成
+        text_columns = self.config['data']['text_columns']
+        for col in text_columns:
+            if col in df_processed.columns:
+                df_processed[f"{col}_length"] = df_processed[col].astype(str).str.len()
+
+        if 'combined_text' in df_processed.columns:
+            df_processed['combined_text'] = df_processed['combined_text'].astype(str)
+            df_processed['combined_text_length'] = df_processed['combined_text'].str.len()
+
         # テキスト長を制限
         max_length = int(self.config['model']['max_length'])
         if 'combined_text' in df_processed.columns:
             df_processed['combined_text'] = df_processed['combined_text'].apply(
                 lambda x: self.truncate_text(x, max_length)
             )
-        
+
+        # 元の個別テキスト列は除去
+        for col in text_columns:
+            if col in df_processed.columns:
+                df_processed = df_processed.drop(columns=[col])
+
         return df_processed
         
     def split_data(self, df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
