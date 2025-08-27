@@ -74,6 +74,16 @@ ModernBERTの訓練にはGPUの使用を強く推奨します。
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 ```
 
+### 3. セットアップ確認
+
+依存関係やデータ配置が正しいかを確認するため、以下のコマンドを実行してセットアップをチェックしてください。
+
+```bash
+python test_setup.py
+```
+
+すべてのテストが通過すれば準備完了です。
+
 ## 📊 実行方法
 
 ### Phase 1: データ探索・前処理・ベースライン構築
