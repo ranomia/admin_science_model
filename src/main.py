@@ -21,8 +21,9 @@ from sklearn.model_selection import train_test_split
 from data.preprocessing import DataPreprocessor, setup_logging
 from models.baseline_models import create_baseline_models, BaselineEvaluator
 from models.modernbert_classifier import create_modernbert_model, ModernBERTTrainer
+from models.ensemble_model import EnsembleModel
 from data.dataset import create_data_loaders
-from evaluation.metrics import ModelEvaluator
+from evaluation.metrics import ModelEvaluator, MetricsCalculator
 
 # 警告を抑制
 warnings.filterwarnings('ignore')
@@ -299,72 +300,98 @@ def phase3_model_evaluation(config: Dict, logger: logging.Logger, phase1_results
     # ベースラインモデルを訓練+検証データで最終訓練
     logger.info(f"ベースラインモデル ({best_baseline_name}) を訓練+検証データで最終訓練します")
     baseline_model.fit(X_train_val, y_train_val)
-    
+
     # テストデータで評価
     baseline_evaluator = BaselineEvaluator(config)
     baseline_test_report = baseline_evaluator.generate_detailed_report(
         baseline_model, X_test, y_test, best_baseline_name
     )
-    
+
     logger.info(f"ベースラインモデル ({phase1_results['best_baseline_model']}) のテストデータ結果:")
     for metric, score in baseline_test_report['metrics'].items():
         logger.info(f"  {metric}: {score:.4f}")
-    
+
     logger.info("2. ModernBERTモデルをテストデータで評価します")
     # ModernBERTモデルをテストデータで評価
     import torch
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
+
     # 最良のModernBERTモデルをロード
     model, tokenizer = create_modernbert_model(config)
     trainer = ModernBERTTrainer(model, tokenizer, config, device)
-    
+
     # ベストモデルをロード
     model_path = Path(phase2_results['model_path'])
     trainer.load_model(model_path)
-    
+
     # テストデータローダーを作成
     test_data_loaders = create_data_loaders(
         None, None, test_df, tokenizer, config
     )
-    
+
     # テストデータで評価
     modernbert_test_metrics = trainer.evaluate(test_data_loaders['test'])
-    
+
     logger.info("ModernBERTモデルのテストデータ評価結果:")
     for metric, score in modernbert_test_metrics.items():
         logger.info(f"  {metric}: {score:.4f}")
-    
-    # ベースラインモデルとModernBERTの比較
-    logger.info("3. 最終的なモデル比較を実行します")
-    
+
+    # アンサンブルモデルの評価
+    logger.info("3. ベースラインとModernBERTのアンサンブルを評価します")
+    ensemble_model = EnsembleModel(baseline_model, trainer)
+    ensemble_preds, ensemble_probs = ensemble_model.predict(
+        X_test, test_data_loaders['test']
+    )
+    metrics_calc = MetricsCalculator()
+    y_true_encoded = baseline_model._encode_labels(y_test)
+    ensemble_metrics = metrics_calc.calculate_all_metrics(
+        y_true_encoded, ensemble_preds, ensemble_probs
+    )
+    logger.info("アンサンブルモデルのテストデータ評価結果:")
+    for metric, score in ensemble_metrics.items():
+        logger.info(f"  {metric}: {score:.4f}")
+
+    # ベースライン・ModernBERT・アンサンブルの比較
+    logger.info("4. 最終的なモデル比較を実行します")
+
     # 結果をまとめる
     comparison_results = {
         'baseline_best_model': phase1_results['best_baseline_model'],
         'baseline_test_metrics': baseline_test_report['metrics'],
         'modernbert_test_metrics': modernbert_test_metrics,
-        'improvement': {}
+        'ensemble_test_metrics': ensemble_metrics,
+        'improvement': {'modernbert': {}, 'ensemble': {}},
     }
-    
+
     # 改善度を計算
     for metric in ['accuracy', 'precision', 'recall', 'f1']:
-        if metric in baseline_test_report['metrics'] and metric in modernbert_test_metrics:
+        if metric in baseline_test_report['metrics']:
             baseline_score = baseline_test_report['metrics'][metric]
-            modernbert_score = modernbert_test_metrics[metric]
-            improvement = modernbert_score - baseline_score
-            comparison_results['improvement'][metric] = {
-                'absolute': improvement,
-                'relative': (improvement / baseline_score) * 100 if baseline_score > 0 else 0
-            }
-    
+            if metric in modernbert_test_metrics:
+                modernbert_score = modernbert_test_metrics[metric]
+                comparison_results['improvement']['modernbert'][metric] = {
+                    'absolute': modernbert_score - baseline_score,
+                    'relative': (modernbert_score - baseline_score) / baseline_score * 100
+                    if baseline_score > 0
+                    else 0,
+                }
+            if metric in ensemble_metrics:
+                ensemble_score = ensemble_metrics[metric]
+                comparison_results['improvement']['ensemble'][metric] = {
+                    'absolute': ensemble_score - baseline_score,
+                    'relative': (ensemble_score - baseline_score) / baseline_score * 100
+                    if baseline_score > 0
+                    else 0,
+                }
+
     logger.info("最終モデル比較結果（テストデータ）:")
     logger.info(f"ベースライン最良モデル: {comparison_results['baseline_best_model']}")
     logger.info("性能比較:")
-    for metric in ['accuracy', 'precision', 'recall', 'f1']:
-        if metric in comparison_results['improvement']:
-            imp = comparison_results['improvement'][metric]
+    for model_name, metrics_dict in comparison_results['improvement'].items():
+        logger.info(f"{model_name}:")
+        for metric, imp in metrics_dict.items():
             logger.info(f"  {metric}: {imp['absolute']:+.4f} ({imp['relative']:+.2f}%)")
-    
+
     phase3_results = {
         'model_comparison': comparison_results,
         'results_saved_to': str(results_dir)
