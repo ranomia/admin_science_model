@@ -12,3 +12,4 @@ shap>=0.42.0
 lime>=0.2.0
 plotly>=5.15.0
 lightgbm>=4.0.0
+optuna>=3.0.0

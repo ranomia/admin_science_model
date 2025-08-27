@@ -3,7 +3,7 @@
 
 このモジュールは以下の機能を提供します:
 - TF-IDF特徴量抽出
-- 従来の機械学習モデル（ロジスティック回帰、ランダムフォレスト等）
+- 従来の機械学習モデル（ランダムフォレスト等）
 - ベースライン性能の評価
 """
 
@@ -16,9 +16,11 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import (
+    StratifiedKFold,
+    cross_val_score,
+)
 from sklearn.pipeline import Pipeline
 from sklearn.svm import SVC
 from sklearn.compose import ColumnTransformer
@@ -26,6 +28,8 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.base import BaseEstimator, TransformerMixin
 
 from lightgbm import LGBMClassifier
+from optuna.integration import OptunaSearchCV
+from optuna.distributions import FloatDistribution, IntDistribution
 import torch
 from transformers import AutoTokenizer, AutoModel
 
@@ -255,70 +259,6 @@ class BaselineModel:
         self.logger.info(f"モデルを読み込みました: {filepath}")
 
 
-class TFIDFLogisticRegression(BaselineModel):
-    """TF-IDF + ロジスティック回帰モデル."""
-    
-    def __init__(self, config: Dict):
-        """初期化."""
-        super().__init__(config)
-        
-        # TF-IDFベクトライザーの設定
-        self.vectorizer = TfidfVectorizer(
-            max_features=10000,
-            ngram_range=(1, 2),
-            stop_words=None,  # 日本語のストップワードは別途対応
-            min_df=2,
-            max_df=0.95,
-            sublinear_tf=True
-        )
-        
-        # ロジスティック回帰の設定
-        self.model = LogisticRegression(
-            random_state=config['evaluation']['random_state'],
-            max_iter=1000,
-            class_weight='balanced'
-        )
-        
-        # パイプライン作成
-        self.pipeline = Pipeline([
-            ('tfidf', self.vectorizer),
-            ('classifier', self.model)
-        ])
-        
-    def fit(self, X: Union[pd.Series, pd.DataFrame], y: pd.Series) -> None:
-        """モデルを訓練する."""
-        self.logger.info("TF-IDF + ロジスティック回帰の訓練を開始します")
-
-        if isinstance(X, pd.DataFrame):
-            X_input = X['combined_text']
-        else:
-            X_input = X
-
-        # ラベルをエンコード
-        y_encoded = self._encode_labels(y)
-
-        # 訓練
-        self.pipeline.fit(X_input, y_encoded)
-        self.is_fitted = True
-
-        self.logger.info("訓練が完了しました")
-
-    def predict(self, X: Union[pd.Series, pd.DataFrame]) -> np.ndarray:
-        """予測を行う."""
-        if not self.is_fitted:
-            raise ValueError("モデルが訓練されていません")
-
-        X_input = X['combined_text'] if isinstance(X, pd.DataFrame) else X
-        return self.pipeline.predict(X_input)
-
-    def predict_proba(self, X: Union[pd.Series, pd.DataFrame]) -> np.ndarray:
-        """予測確率を計算する."""
-        if not self.is_fitted:
-            raise ValueError("モデルが訓練されていません")
-
-        X_input = X['combined_text'] if isinstance(X, pd.DataFrame) else X
-        return self.pipeline.predict_proba(X_input)
-
 
 class TFIDFRandomForest(BaselineModel):
     """TF-IDF + ランダムフォレストモデル."""
@@ -465,7 +405,34 @@ class TFIDFLightGBM(BaselineModel):
         y_encoded = self._encode_labels(y)
 
         self._build_pipeline(X_df)
-        self.pipeline.fit(X_df, y_encoded)
+        param_distributions = {
+            'classifier__n_estimators': IntDistribution(100, 1000),
+            'classifier__learning_rate': FloatDistribution(1e-3, 0.3, log=True),
+            'classifier__num_leaves': IntDistribution(20, 150),
+            'classifier__max_depth': IntDistribution(3, 12),
+            'classifier__min_child_samples': IntDistribution(5, 100),
+            'classifier__subsample': FloatDistribution(0.6, 1.0),
+            'classifier__colsample_bytree': FloatDistribution(0.6, 1.0),
+            'classifier__reg_alpha': FloatDistribution(0.0, 10.0),
+            'classifier__reg_lambda': FloatDistribution(0.0, 10.0)
+        }
+        cv = StratifiedKFold(
+            n_splits=self.config['evaluation']['cv_folds'],
+            shuffle=True,
+            random_state=self.config['evaluation']['random_state']
+        )
+        optuna_search = OptunaSearchCV(
+            estimator=self.pipeline,
+            param_distributions=param_distributions,
+            cv=cv,
+            scoring='roc_auc',
+            n_trials=self.config['evaluation'].get('optuna_trials', 50),
+            n_jobs=-1,
+            random_state=self.config['evaluation']['random_state']
+        )
+        optuna_search.fit(X_df, y_encoded)
+        self.pipeline = optuna_search.best_estimator_
+        self.model = self.pipeline.named_steps['classifier']
         self.is_fitted = True
 
         self.logger.info("訓練が完了しました")
@@ -662,7 +629,6 @@ def create_baseline_models(config: Dict) -> Dict[str, BaselineModel]:
         ベースラインモデルの辞書
     """
     models = {
-        'tfidf_logistic': TFIDFLogisticRegression(config),
         'tfidf_lightgbm': TFIDFLightGBM(config),
         'tfidf_labse_lightgbm': TFIDFLaBSELightGBM(config)
     }
