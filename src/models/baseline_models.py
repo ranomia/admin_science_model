@@ -22,10 +22,39 @@ from sklearn.model_selection import cross_val_score
 from sklearn.pipeline import Pipeline
 from sklearn.svm import SVC
 from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import FunctionTransformer
+from sklearn.preprocessing import LabelEncoder
+from sklearn.base import BaseEstimator, TransformerMixin
 
 from lightgbm import LGBMClassifier
 
+
+class DataFrameLabelEncoder(BaseEstimator, TransformerMixin):
+    """複数列に対してLabelEncoderを適用するトランスフォーマー."""
+
+    def __init__(self):
+        self.encoders: Dict[str, LabelEncoder] = {}
+
+    def fit(self, X: pd.DataFrame, y: Optional[pd.Series] = None):
+        X = pd.DataFrame(X)
+        for col in X.columns:
+            le = LabelEncoder()
+            le.fit(X[col].astype(str).fillna(''))
+            self.encoders[col] = le
+        return self
+
+    def transform(self, X: pd.DataFrame) -> np.ndarray:
+        X = pd.DataFrame(X)
+        transformed = []
+        for col in X.columns:
+            le = self.encoders[col]
+            transformed.append(
+                X[col]
+                .astype(str)
+                .fillna('')
+                .map(lambda s: le.transform([s])[0] if s in le.classes_ else -1)
+                .astype(np.int32)
+            )
+        return np.vstack(transformed).T
 
 class BaselineModel:
     """ベースラインモデルのベースクラス."""
@@ -349,14 +378,21 @@ class TFIDFLightGBM(BaselineModel):
         self.pipeline = None
 
     def _build_pipeline(self, X: pd.DataFrame) -> None:
-        numeric_features = [col for col in X.columns if col != 'combined_text']
+        numeric_features = X.select_dtypes(include=[np.number]).columns.tolist()
+        categorical_features = [
+            col for col in X.select_dtypes(include=['object', 'category']).columns
+            if col != 'combined_text'
+        ]
 
-        preprocessor = ColumnTransformer(
-            transformers=[
-                ('tfidf', self.vectorizer, 'combined_text'),
-                ('num', 'passthrough', numeric_features)
-            ]
-        )
+        transformers = [('tfidf', self.vectorizer, 'combined_text')]
+        if numeric_features:
+            transformers.append(('num', 'passthrough', numeric_features))
+        if categorical_features:
+            transformers.append(
+                ('cat', DataFrameLabelEncoder(), categorical_features)
+            )
+
+        preprocessor = ColumnTransformer(transformers=transformers)
 
         self.pipeline = Pipeline([
             ('preprocessor', preprocessor),
