@@ -28,6 +28,7 @@ training:
   save_steps: 500
   eval_steps: 500
   logging_steps: 100
+  use_class_weights: true
   
 # 評価設定
 evaluation:

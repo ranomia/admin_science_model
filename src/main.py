@@ -20,7 +20,11 @@ from sklearn.model_selection import train_test_split
 # 自作モジュールのインポート
 from data.preprocessing import DataPreprocessor, setup_logging
 from models.baseline_models import create_baseline_models, BaselineEvaluator
-from models.modernbert_classifier import create_modernbert_model, ModernBERTTrainer
+from models.modernbert_classifier import (
+    create_modernbert_model,
+    ModernBERTTrainer,
+    calculate_class_weights,
+)
 from models.ensemble_model import EnsembleModel
 from data.dataset import create_data_loaders
 from evaluation.metrics import ModelEvaluator, MetricsCalculator
@@ -181,9 +185,15 @@ def phase2_modernbert_training(config: Dict, logger: logging.Logger) -> Dict:
     train_df = pd.read_csv(processed_dir / 'train_processed.csv')
     val_df = pd.read_csv(processed_dir / 'val_processed.csv')
     
+    # クラス重みを計算（クラス不均衡対策）
+    class_weights = None
+    if config['training'].get('use_class_weights'):
+        target_col = config['data']['target_column']
+        class_weights = calculate_class_weights(train_df[target_col].tolist())
+
     # ModernBERTモデルとトークナイザーを作成
     logger.info("ModernBERTモデルを初期化します")
-    model, tokenizer = create_modernbert_model(config)
+    model, tokenizer = create_modernbert_model(config, class_weights=class_weights)
     
     # データローダーを作成
     logger.info("データローダーを作成します")
