@@ -32,7 +32,8 @@ class ModernBERTClassifier(nn.Module):
         model_name: str = "sbintuitions/modernbert-ja-130m",
         num_labels: int = 2,
         dropout_rate: float = 0.1,
-        hidden_size: Optional[int] = None
+        hidden_size: Optional[int] = None,
+        class_weights: Optional[torch.Tensor] = None
     ):
         """
         初期化.
@@ -58,7 +59,10 @@ class ModernBERTClassifier(nn.Module):
             
         self.dropout = nn.Dropout(dropout_rate)
         self.classifier = nn.Linear(hidden_size, num_labels)
-        
+
+        # クラス重みを保存（クラス不均衡対策）
+        self.class_weights = class_weights
+
         # 重みの初期化
         self._init_weights()
         
@@ -111,7 +115,11 @@ class ModernBERTClassifier(nn.Module):
         
         # 損失を計算（訓練時）
         if labels is not None:
-            loss_fct = nn.CrossEntropyLoss()
+            if self.class_weights is not None:
+                weight = self.class_weights.to(logits.device)
+                loss_fct = nn.CrossEntropyLoss(weight=weight)
+            else:
+                loss_fct = nn.CrossEntropyLoss()
             loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
             result['loss'] = loss
             
@@ -440,7 +448,10 @@ class ModernBERTTrainer:
         self.logger.info(f"モデルを読み込みました: {load_path}")
 
 
-def create_modernbert_model(config: Dict) -> Tuple[ModernBERTClassifier, AutoTokenizer]:
+def create_modernbert_model(
+    config: Dict,
+    class_weights: Optional[torch.Tensor] = None
+) -> Tuple[ModernBERTClassifier, AutoTokenizer]:
     """
     ModernBERTモデルとトークナイザーを作成する.
     
@@ -459,7 +470,8 @@ def create_modernbert_model(config: Dict) -> Tuple[ModernBERTClassifier, AutoTok
     model = ModernBERTClassifier(
         model_name=model_name,
         num_labels=config['model']['num_labels'],
-        dropout_rate=float(config['model']['dropout_rate'])
+        dropout_rate=float(config['model']['dropout_rate']),
+        class_weights=class_weights
     )
     
     return model, tokenizer
