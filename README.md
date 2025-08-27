@@ -225,7 +225,7 @@ python src/main.py --log-level DEBUG
 ### 使用技術
 - **フレームワーク**: PyTorch + Transformers
 - **モデル**: ModernBERT (sbintuitions/modernbert-ja-130m)
-- **ベースライン**: TF-IDF + ロジスティック回帰/LightGBM
+- **ベースライン**: TF-IDF + LightGBM（Optunaによるハイパーパラメータチューニング）
 - **評価**: 5-fold Cross Validation
 
 ### 必要環境
