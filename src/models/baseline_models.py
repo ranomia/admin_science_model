@@ -410,11 +410,12 @@ class TFIDFLightGBM(BaselineModel):
             'classifier__learning_rate': FloatDistribution(1e-3, 0.3, log=True),
             'classifier__num_leaves': IntDistribution(20, 150),
             'classifier__max_depth': IntDistribution(3, 12),
-            'classifier__min_child_samples': IntDistribution(5, 100),
+            'classifier__min_child_samples': IntDistribution(1, 100),
             'classifier__subsample': FloatDistribution(0.6, 1.0),
             'classifier__colsample_bytree': FloatDistribution(0.6, 1.0),
-            'classifier__reg_alpha': FloatDistribution(0.0, 10.0),
-            'classifier__reg_lambda': FloatDistribution(0.0, 10.0)
+            'classifier__reg_alpha': FloatDistribution(1e-8, 1.0, log=True),
+            'classifier__reg_lambda': FloatDistribution(1e-8, 1.0, log=True),
+            'classifier__min_split_gain': FloatDistribution(0.0, 0.2)
         }
         cv = StratifiedKFold(
             n_splits=self.config['evaluation']['cv_folds'],
