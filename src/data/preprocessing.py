@@ -11,6 +11,7 @@
 
 import logging
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -19,18 +20,12 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 
 
+@dataclass
 class DataPreprocessor:
     """行政事業レビューデータの前処理クラス."""
-    
-    def __init__(self, config: Dict):
-        """
-        初期化.
-        
-        Args:
-            config: 設定辞書
-        """
-        self.config = config
-        self.logger = logging.getLogger(__name__)
+
+    config: Dict
+    logger: logging.Logger = field(default_factory=lambda: logging.getLogger(__name__))
         
     def load_data(self, file_path: Union[str, Path]) -> pd.DataFrame:
         """
@@ -130,18 +125,17 @@ class DataPreprocessor:
             欠損値処理後のデータフレーム
         """
         df_processed = df.copy()
-        
+
         # テキスト列の欠損値を空文字列で埋める
-        text_columns = self.config['data']['text_columns']
-        for col in text_columns:
-            if col in df_processed.columns:
-                df_processed[col] = df_processed[col].fillna('')
-                
+        text_columns = [col for col in self.config['data']['text_columns'] if col in df_processed]
+        if text_columns:
+            df_processed[text_columns] = df_processed[text_columns].fillna('')
+
         # 数値列の欠損値を0で埋める
         numeric_columns = df_processed.select_dtypes(include=[np.number]).columns
-        for col in numeric_columns:
-            df_processed[col] = df_processed[col].fillna(0)
-            
+        if len(numeric_columns) > 0:
+            df_processed[numeric_columns] = df_processed[numeric_columns].fillna(0)
+
         self.logger.info("欠損値処理を完了しました")
         return df_processed
         
@@ -156,29 +150,16 @@ class DataPreprocessor:
             テキスト特徴量結合後のデータフレーム
         """
         df_processed = df.copy()
-        
-        # テキスト列をクリーニング
-        text_columns = self.config['data']['text_columns']
-        for col in text_columns:
-            if col in df_processed.columns:
-                df_processed[col] = df_processed[col].apply(self.clean_text)
-        
-        # テキスト特徴量を結合
-        text_parts = []
-        for col in text_columns:
-            if col in df_processed.columns:
-                text_parts.append(df_processed[col])
-        
-        # 結合テキストを作成（空でないものだけを結合）
-        combined_texts = []
-        for idx in range(len(df_processed)):
-            parts = [str(text_parts[i].iloc[idx]) for i in range(len(text_parts)) 
-                    if str(text_parts[i].iloc[idx]).strip() != '']
-            combined_text = ' '.join(parts)
-            combined_texts.append(combined_text)
-            
-        df_processed['combined_text'] = combined_texts
-        
+
+        text_columns = [col for col in self.config['data']['text_columns'] if col in df_processed]
+        if text_columns:
+            df_processed[text_columns] = df_processed[text_columns].fillna('').applymap(self.clean_text)
+            df_processed['combined_text'] = df_processed[text_columns].apply(
+                lambda row: ' '.join(filter(None, map(str, row))), axis=1
+            )
+        else:
+            df_processed['combined_text'] = ''
+
         self.logger.info("テキスト特徴量の結合を完了しました")
         return df_processed
         
@@ -208,14 +189,15 @@ class DataPreprocessor:
             特徴量準備後のデータフレーム
         """
         df_processed = df.copy()
-        
+
         # 禁止列を除去
         forbidden_columns = self.config['data']['forbidden_columns']
-        for col in forbidden_columns:
-            if col in df_processed.columns:
-                df_processed = df_processed.drop(columns=[col])
+        drop_cols = [col for col in forbidden_columns if col in df_processed]
+        if drop_cols:
+            df_processed.drop(columns=drop_cols, inplace=True)
+            for col in drop_cols:
                 self.logger.info(f"禁止列を除去しました: {col}")
-        
+
         # テキスト長特徴量を作成
         text_columns = self.config['data']['text_columns']
         for col in text_columns:
@@ -225,18 +207,15 @@ class DataPreprocessor:
         if 'combined_text' in df_processed.columns:
             df_processed['combined_text'] = df_processed['combined_text'].astype(str)
             df_processed['combined_text_length'] = df_processed['combined_text'].str.len()
-
-        # テキスト長を制限
-        max_length = int(self.config['model']['max_length'])
-        if 'combined_text' in df_processed.columns:
+            max_length = int(self.config['model']['max_length'])
             df_processed['combined_text'] = df_processed['combined_text'].apply(
                 lambda x: self.truncate_text(x, max_length)
             )
 
         # 元の個別テキスト列は除去
-        for col in text_columns:
-            if col in df_processed.columns:
-                df_processed = df_processed.drop(columns=[col])
+        drop_text_cols = [col for col in text_columns if col in df_processed]
+        if drop_text_cols:
+            df_processed.drop(columns=drop_text_cols, inplace=True)
 
         return df_processed
         
