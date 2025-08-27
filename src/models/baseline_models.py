@@ -478,16 +478,18 @@ class BaselineEvaluator:
 def create_baseline_models(config: Dict) -> Dict[str, BaselineModel]:
     """
     ベースラインモデルを作成する.
-    
+
+    現時点では精度の低かった手法を除外し、
+    TF-IDF + ロジスティック回帰のみを提供する。
+
     Args:
         config: 設定辞書
-        
+
     Returns:
         ベースラインモデルの辞書
     """
     models = {
-        'tfidf_logistic': TFIDFLogisticRegression(config),
-        'tfidf_random_forest': TFIDFRandomForest(config)
+        'tfidf_logistic': TFIDFLogisticRegression(config)
     }
-    
-    return models 
+
+    return models
