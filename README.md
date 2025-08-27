@@ -128,6 +128,17 @@ python src/main.py --config custom_config.yaml
 python src/main.py --log-level DEBUG
 ```
 
+### 推論（テストデータの予測）
+
+学習済みModernBERTモデルを用いてテストデータの予測値を出力します。
+
+```bash
+python src/inference.py --config src/config/config.yaml --model-path models/best_model --output results/test_predictions.csv
+```
+
+- `--model-path` を省略すると `config.output.model_dir` 配下の `best_model` を使用します。
+- 予測結果は `results/test_predictions.csv` に `project_id`、`prediction`（該当/非該当）、`probability_yes` が保存されます。
+
 ## 📈 データ探索
 
 Jupyter Notebookを使用したインタラクティブなデータ探索：
