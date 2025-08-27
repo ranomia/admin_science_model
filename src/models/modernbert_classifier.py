@@ -154,8 +154,7 @@ class ModernBERTTrainer:
         self.train_history = {
             'train_loss': [],
             'val_loss': [],
-            'val_accuracy': [],
-            'val_f1': []
+            'val_roc_auc': []
         }
         
     def setup_optimizer(self, num_training_steps: int) -> None:
@@ -240,8 +239,8 @@ class ModernBERTTrainer:
         """
         self.model.eval()
         total_loss = 0.0
-        all_preds = []
         all_labels = []
+        all_probs = []
         
         with torch.no_grad():
             for batch in tqdm(eval_loader, desc="Evaluating"):
@@ -255,25 +254,22 @@ class ModernBERTTrainer:
                 if 'loss' in outputs:
                     total_loss += outputs['loss'].item()
                 
-                # 予測を取得
+                # 予測確率を取得
                 logits = outputs['logits']
-                preds = torch.argmax(logits, dim=-1)
-                
-                all_preds.extend(preds.cpu().numpy())
+                probs = torch.softmax(logits, dim=-1)
+
                 if 'labels' in batch:
                     all_labels.extend(batch['labels'].cpu().numpy())
+                    all_probs.extend(probs[:, 1].cpu().numpy())
         
         # 評価指標を計算
         metrics = {}
         if all_labels:
-            from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
-            
+            from sklearn.metrics import roc_auc_score
+
             metrics = {
                 'loss': total_loss / len(eval_loader),
-                'accuracy': accuracy_score(all_labels, all_preds),
-                'f1': f1_score(all_labels, all_preds, average='weighted'),
-                'precision': precision_score(all_labels, all_preds, average='weighted'),
-                'recall': recall_score(all_labels, all_preds, average='weighted')
+                'roc_auc': roc_auc_score(all_labels, all_probs)
             }
         
         return metrics
@@ -306,7 +302,8 @@ class ModernBERTTrainer:
         
         self.logger.info(f"訓練を開始します - エポック数: {num_epochs}")
         
-        best_f1 = 0.0
+        best_roc_auc = 0.0
+
         patience = int(self.config['training'].get('early_stopping_patience', 0))
         patience_counter = 0
 
@@ -320,24 +317,23 @@ class ModernBERTTrainer:
             # 検証
             if val_loader is not None:
                 val_metrics = self.evaluate(val_loader)
-                
+
                 self.train_history['val_loss'].append(val_metrics.get('loss', 0.0))
-                self.train_history['val_accuracy'].append(val_metrics.get('accuracy', 0.0))
-                self.train_history['val_f1'].append(val_metrics.get('f1', 0.0))
-                
+                self.train_history['val_roc_auc'].append(val_metrics.get('roc_auc', 0.0))
+
                 self.logger.info(f"Train Loss: {train_loss:.4f}")
                 self.logger.info(f"Val Loss: {val_metrics.get('loss', 0.0):.4f}")
-                self.logger.info(f"Val Accuracy: {val_metrics.get('accuracy', 0.0):.4f}")
-                self.logger.info(f"Val F1: {val_metrics.get('f1', 0.0):.4f}")
-                
+                self.logger.info(f"Val ROC-AUC: {val_metrics.get('roc_auc', 0.0):.4f}")
+
                 # ベストモデルを保存
-                current_f1 = val_metrics.get('f1', 0.0)
-                if current_f1 > best_f1:
-                    best_f1 = current_f1
+                current_roc_auc = val_metrics.get('roc_auc', 0.0)
+                if current_roc_auc > best_roc_auc:
+                    best_roc_auc = current_roc_auc
                     patience_counter = 0
                     if save_dir is not None:
                         self.save_model(save_dir / 'best_model')
-                        self.logger.info(f"ベストモデルを保存しました (F1: {best_f1:.4f})")
+                        self.logger.info(f"ベストモデルを保存しました (ROC-AUC: {best_roc_auc:.4f})")
+
                 else:
                     patience_counter += 1
                     if patience > 0 and patience_counter >= patience:

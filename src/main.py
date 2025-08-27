@@ -345,13 +345,13 @@ def phase3_model_evaluation(config: Dict, logger: logging.Logger, phase1_results
     # アンサンブルモデルの評価
     logger.info("3. ベースラインとModernBERTのアンサンブルを評価します")
     ensemble_model = EnsembleModel(baseline_model, trainer)
-    ensemble_preds, ensemble_probs = ensemble_model.predict(
+    _, ensemble_probs = ensemble_model.predict(
         X_test, test_data_loaders['test']
     )
     metrics_calc = MetricsCalculator()
     y_true_encoded = baseline_model._encode_labels(y_test)
     ensemble_metrics = metrics_calc.calculate_all_metrics(
-        y_true_encoded, ensemble_preds, ensemble_probs
+        y_true_encoded, y_prob=ensemble_probs
     )
     logger.info("アンサンブルモデルのテストデータ評価結果:")
     for metric, score in ensemble_metrics.items():
@@ -370,7 +370,7 @@ def phase3_model_evaluation(config: Dict, logger: logging.Logger, phase1_results
     }
 
     # 改善度を計算
-    for metric in ['accuracy', 'precision', 'recall', 'f1']:
+    for metric in ['roc_auc']:
         if metric in baseline_test_report['metrics']:
             baseline_score = baseline_test_report['metrics'][metric]
             if metric in modernbert_test_metrics:

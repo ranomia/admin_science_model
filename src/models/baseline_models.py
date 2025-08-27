@@ -17,10 +17,7 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import (
-    accuracy_score, classification_report, confusion_matrix, f1_score,
-    precision_score, recall_score, roc_auc_score
-)
+from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import cross_val_score
 from sklearn.pipeline import Pipeline
 from sklearn.svm import SVC
@@ -123,23 +120,16 @@ class BaselineModel:
         if not self.is_fitted:
             raise ValueError("モデルが訓練されていません")
             
-        # 予測
-        y_pred = self.predict(X)
+        # 予測確率
         y_prob = self.predict_proba(X)
-        
+
         # ラベルをエンコード
         y_true = self._encode_labels(y)
-        
-        # 評価指標を計算
-        metrics = {
-            'accuracy': accuracy_score(y_true, y_pred),
-            'precision': precision_score(y_true, y_pred, average='weighted'),
-            'recall': recall_score(y_true, y_pred, average='weighted'),
-            'f1': f1_score(y_true, y_pred, average='weighted'),
+
+        # ROC-AUCのみ計算
+        return {
             'roc_auc': roc_auc_score(y_true, y_prob[:, 1])
         }
-        
-        return metrics
         
     def save_model(self, filepath: Union[str, Path]) -> None:
         """
@@ -487,19 +477,13 @@ class BaselineEvaluator:
         # ラベルをエンコード
         y_encoded = model._encode_labels(y)
         
-        # クロスバリデーション実行
-        scoring = ['accuracy', 'precision_weighted', 'recall_weighted', 'f1_weighted']
-        cv_results = {}
-        
-        for score in scoring:
-            scores = cross_val_score(
-                model.pipeline, X, y_encoded,
-                cv=cv, scoring=score,
-                n_jobs=-1
-            )
-            cv_results[score] = scores
-            
-        return cv_results
+        # クロスバリデーション実行（ROC-AUCのみ）
+        scores = cross_val_score(
+            model.pipeline, X, y_encoded,
+            cv=cv, scoring='roc_auc',
+            n_jobs=-1
+        )
+        return {'roc_auc': scores}
         
     def generate_detailed_report(
         self,
@@ -523,37 +507,23 @@ class BaselineEvaluator:
         if not model.is_fitted:
             raise ValueError("モデルが訓練されていません")
             
-        # 予測
-        y_pred = model.predict(X_test)
+        # 予測確率のみ取得
         y_prob = model.predict_proba(X_test)
         y_true = model._encode_labels(y_test)
-        
-        # 基本的な評価指標
+
+        # ROC-AUCを計算
         metrics = model.evaluate(X_test, y_test)
-        
-        # 混同行列
-        cm = confusion_matrix(y_true, y_pred)
-        
-        # 分類レポート
-        class_report = classification_report(
-            y_true, y_pred,
-            target_names=['非該当', '該当'],
-            output_dict=True
-        )
-        
-        # 詳細レポート
+
+        # 詳細レポート（ROC-AUCと確率のみ）
         report = {
             'model_name': model_name,
             'metrics': metrics,
-            'confusion_matrix': cm,
-            'classification_report': class_report,
             'predictions': {
                 'y_true': y_true,
-                'y_pred': y_pred,
                 'y_prob': y_prob
             }
         }
-        
+
         return report
 
 

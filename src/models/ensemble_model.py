@@ -76,6 +76,6 @@ class EnsembleModel:
             評価指標の辞書
         """
         y_encoded = self.baseline_model._encode_labels(y_true)
-        preds, probs = self.predict(X_text, bert_loader)
-        return self.metrics.calculate_all_metrics(y_encoded, preds, probs)
+        _, probs = self.predict(X_text, bert_loader)
+        return self.metrics.calculate_all_metrics(y_encoded, y_prob=probs)
 
