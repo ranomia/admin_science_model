@@ -307,7 +307,9 @@ class ModernBERTTrainer:
         self.logger.info(f"訓練を開始します - エポック数: {num_epochs}")
         
         best_f1 = 0.0
-        
+        patience = int(self.config['training'].get('early_stopping_patience', 0))
+        patience_counter = 0
+
         for epoch in range(num_epochs):
             self.logger.info(f"Epoch {epoch + 1}/{num_epochs}")
             
@@ -330,10 +332,17 @@ class ModernBERTTrainer:
                 
                 # ベストモデルを保存
                 current_f1 = val_metrics.get('f1', 0.0)
-                if current_f1 > best_f1 and save_dir is not None:
+                if current_f1 > best_f1:
                     best_f1 = current_f1
-                    self.save_model(save_dir / 'best_model')
-                    self.logger.info(f"ベストモデルを保存しました (F1: {best_f1:.4f})")
+                    patience_counter = 0
+                    if save_dir is not None:
+                        self.save_model(save_dir / 'best_model')
+                        self.logger.info(f"ベストモデルを保存しました (F1: {best_f1:.4f})")
+                else:
+                    patience_counter += 1
+                    if patience > 0 and patience_counter >= patience:
+                        self.logger.info("Early stopping の条件を満たしたため訓練を終了します")
+                        break
         
         self.logger.info("訓練が完了しました")
         return self.train_history

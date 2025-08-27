@@ -103,12 +103,14 @@ def phase1_data_exploration_and_baseline(config: Dict, logger: logging.Logger) -
     baseline_evaluator = BaselineEvaluator(config)
     
     # 特徴量とラベルを準備
-    X_train = train_split['combined_text']
-    y_train = train_split[config['data']['target_column']]
-    X_val = val_split['combined_text']
-    y_val = val_split[config['data']['target_column']]
-    X_test = test_processed['combined_text']
-    y_test = test_processed[config['data']['target_column']] if config['data']['target_column'] in test_processed.columns else None
+    target_col = config['data']['target_column']
+    feature_cols = [col for col in train_split.columns if col != target_col]
+    X_train = train_split[feature_cols]
+    y_train = train_split[target_col]
+    X_val = val_split[feature_cols]
+    y_val = val_split[target_col]
+    X_test = test_processed[feature_cols]
+    y_test = test_processed[target_col] if target_col in test_processed.columns else None
     
     # 7. ベースラインモデル比較
     logger.info("7. ベースラインモデル比較を開始します")
@@ -274,8 +276,10 @@ def phase3_model_evaluation(config: Dict, logger: logging.Logger, phase1_results
     test_df = pd.read_csv(processed_dir / 'test_processed.csv')
     
     # テストデータの準備
-    X_test = test_df['combined_text']
-    y_test = test_df[config['data']['target_column']]
+    target_col = config['data']['target_column']
+    feature_cols = [col for col in test_df.columns if col != target_col]
+    X_test = test_df[feature_cols]
+    y_test = test_df[target_col]
     
     logger.info("1. ベースラインモデルをテストデータで評価します")
     # ベースラインモデルを再作成して訓練
@@ -288,11 +292,13 @@ def phase3_model_evaluation(config: Dict, logger: logging.Logger, phase1_results
     val_df = pd.read_csv(processed_dir / 'val_processed.csv')
     
     # 訓練データと検証データを結合してベースラインモデルを最終訓練
-    X_train = train_df['combined_text']
-    y_train = train_df[config['data']['target_column']]
-    X_val = val_df['combined_text']
-    y_val = val_df[config['data']['target_column']]
-    
+    target_col = config['data']['target_column']
+    feature_cols = [col for col in train_df.columns if col != target_col]
+    X_train = train_df[feature_cols]
+    y_train = train_df[target_col]
+    X_val = val_df[feature_cols]
+    y_val = val_df[target_col]
+
     # 訓練データと検証データを結合
     X_train_val = pd.concat([X_train, X_val], ignore_index=True)
     y_train_val = pd.concat([y_train, y_val], ignore_index=True)

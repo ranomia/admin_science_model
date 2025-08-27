@@ -15,8 +15,8 @@ def test_imports():
     print("=== ライブラリインポートテスト ===")
     
     required_packages = [
-        'pandas', 'numpy', 'torch', 'transformers', 
-        'scikit-learn', 'matplotlib', 'seaborn', 'yaml', 'tqdm'
+        'pandas', 'numpy', 'torch', 'transformers',
+        'scikit-learn', 'matplotlib', 'seaborn', 'yaml', 'tqdm', 'lightgbm'
     ]
     
     failed_imports = []
