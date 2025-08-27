@@ -26,6 +26,8 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.base import BaseEstimator, TransformerMixin
 
 from lightgbm import LGBMClassifier
+import torch
+from transformers import AutoTokenizer, AutoModel
 
 
 class DataFrameLabelEncoder(BaseEstimator, TransformerMixin):
@@ -55,6 +57,59 @@ class DataFrameLabelEncoder(BaseEstimator, TransformerMixin):
                 .astype(np.int32)
             )
         return np.vstack(transformed).T
+
+
+class LaBSEEmbeddingTransformer(BaseEstimator, TransformerMixin):
+    """LaBSEモデルを用いて文の埋め込みを生成するトランスフォーマー."""
+
+    def __init__(
+        self,
+        model_name: str = "sentence-transformers/LaBSE",
+        batch_size: int = 32,
+        device: Optional[str] = None,
+    ):
+        self.model_name = model_name
+        self.batch_size = batch_size
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self._load_model()
+
+    def _load_model(self) -> None:
+        """Hugging Faceのモデルとトークナイザーを読み込む."""
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+        self.model = AutoModel.from_pretrained(self.model_name).to(self.device)
+        self.model.eval()
+
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state.pop("model", None)
+        state.pop("tokenizer", None)
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self._load_model()
+
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X):
+        texts = pd.Series(X).astype(str).tolist()
+        embeddings = []
+        with torch.no_grad():
+            for i in range(0, len(texts), self.batch_size):
+                batch = texts[i : i + self.batch_size]
+                enc = self.tokenizer(
+                    batch, padding=True, truncation=True, return_tensors="pt"
+                )
+                enc = {k: v.to(self.device) for k, v in enc.items()}
+                outputs = self.model(**enc)
+                token_emb = outputs.last_hidden_state
+                attn_mask = enc["attention_mask"].unsqueeze(-1).expand(token_emb.size()).float()
+                sum_emb = torch.sum(token_emb * attn_mask, 1)
+                sum_mask = torch.clamp(attn_mask.sum(1), min=1e-9)
+                mean_emb = sum_emb / sum_mask
+                embeddings.append(mean_emb.cpu().numpy())
+        return np.vstack(embeddings)
 
 class BaselineModel:
     """ベースラインモデルのベースクラス."""
@@ -430,6 +485,39 @@ class TFIDFLightGBM(BaselineModel):
         return self.pipeline.predict_proba(X_df)
 
 
+class TFIDFLaBSELightGBM(TFIDFLightGBM):
+    """TF-IDFとLaBSE埋め込みを組み合わせたLightGBMモデル."""
+
+    def __init__(self, config: Dict, model_name: str = "sentence-transformers/LaBSE"):
+        super().__init__(config)
+        self.embedder = LaBSEEmbeddingTransformer(model_name=model_name)
+
+    def _build_pipeline(self, X: pd.DataFrame) -> None:
+        numeric_features = X.select_dtypes(include=[np.number]).columns.tolist()
+        categorical_features = [
+            col for col in X.select_dtypes(include=['object', 'category']).columns
+            if col != 'combined_text'
+        ]
+
+        transformers = [
+            ('tfidf', self.vectorizer, 'combined_text'),
+            ('labse', self.embedder, 'combined_text')
+        ]
+        if numeric_features:
+            transformers.append(('num', 'passthrough', numeric_features))
+        if categorical_features:
+            transformers.append(
+                ('cat', DataFrameLabelEncoder(), categorical_features)
+            )
+
+        preprocessor = ColumnTransformer(transformers=transformers)
+
+        self.pipeline = Pipeline([
+            ('preprocessor', preprocessor),
+            ('classifier', self.model)
+        ])
+
+
 class BaselineEvaluator:
     """ベースラインモデルの評価クラス."""
     
@@ -575,7 +663,8 @@ def create_baseline_models(config: Dict) -> Dict[str, BaselineModel]:
     """
     models = {
         'tfidf_logistic': TFIDFLogisticRegression(config),
-        'tfidf_lightgbm': TFIDFLightGBM(config)
+        'tfidf_lightgbm': TFIDFLightGBM(config),
+        'tfidf_labse_lightgbm': TFIDFLaBSELightGBM(config)
     }
 
     return models
